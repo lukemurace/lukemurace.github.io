@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-15';
+const FLASHER_VERSION = '2026-02-28-16';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -600,7 +600,13 @@ document.getElementById('flash').onclick = async () => {
 
     const manifestReady = await waitForManifestReady(22000);
     if (manifestReady.status === 'error') {
-      throw new Error('Bootloader rejected signed manifest. Check device log for parse/signature details.');
+      const reason = manifestReady.text
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .slice(-3)
+        .join(' | ');
+      throw new Error(`Bootloader rejected signed manifest: ${reason || 'unknown reason'}`);
     }
     if (manifestReady.status !== 'ready') {
       throw new Error('Bootloader did not confirm manifest readiness (missing "manifest OK").');
