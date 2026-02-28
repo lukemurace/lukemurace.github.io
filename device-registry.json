@@ -5,7 +5,7 @@
     "enabled": true,
     "revoked": false,
     "notes": "Initial enrolled device"
-  }
+  },
   {
     "device_id": "0000B46BE216A398",
     "label": "BANNED DEV UNIT",
