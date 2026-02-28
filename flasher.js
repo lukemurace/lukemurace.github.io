@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-13';
+const FLASHER_VERSION = '2026-02-28-14';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -526,7 +526,7 @@ document.getElementById('flash').onclick = async () => {
     await writer.write(signedPacket.signatureBytes);
     log(`Sent signed manifest: v${manifest.version}, ${file.size} bytes, sig ${signedPacket.signatureBytes.length} bytes`);
 
-    const manifestReady = await waitForManifestReady(7000);
+    const manifestReady = await waitForManifestReady(22000);
     if (manifestReady.status === 'error') {
       throw new Error('Bootloader rejected signed manifest. Check device log for parse/signature details.');
     }
