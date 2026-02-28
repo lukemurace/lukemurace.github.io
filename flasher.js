@@ -11,7 +11,7 @@ const encoder = new TextEncoder();
 const EXPECTED_DEVICE_ID = 'GENUINE_FCCS';
 const ACK = 0x06;
 const NACK = 0x15;
-const DEVICE_REGISTRY_URL = './device-registry.json';
+const DEVICE_REGISTRY_URL = '/device-registry.json';
 const ENFORCE_REGISTRY_VERIFICATION = true;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const textDecoder = new TextDecoder();

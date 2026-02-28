@@ -525,7 +525,7 @@
         <div class="step-title">Connect to FCCS</div>
         <div class="step-desc">Select your ESP32 serial port via WebSerial</div>
       </div>
-      <button class="btn btn-primary" id="btnConnect" onclick="handleConnect()">Connect</button>
+      <button class="btn btn-primary" id="connect">Connect</button>
     </div>
 
     <!-- Step 2: BLDR -->
@@ -535,7 +535,7 @@
         <div class="step-title">Send BLDR Magic</div>
         <div class="step-desc">Trigger bootloader — auto-reset will be attempted first</div>
       </div>
-      <button class="btn btn-primary" id="btnBldr" onclick="handleBldr()">Send</button>
+      <button class="btn btn-primary" id="sendMagic" disabled>Send</button>
     </div>
 
     <!-- Step 3: Flash -->
@@ -545,14 +545,21 @@
         <div class="step-title">Flash Firmware</div>
         <div class="step-desc">Upload a .bin file to flash to the device</div>
       </div>
-      <button class="btn btn-primary" id="btnFlash" onclick="handleFlash()">Flash</button>
+      <button class="btn btn-primary" id="flash" disabled>Flash</button>
 
       <!-- File drop zone (shown in step 3) -->
-      <div class="file-zone" id="fileZone" onclick="document.getElementById('fileInput').click()" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
-        <input type="file" id="fileInput" accept=".bin" onchange="onFileSelected(event)" />
+      <div class="file-zone" id="fileZone">
+        <input type="file" id="firmware" accept=".bin" />
         <span class="file-icon">📦</span>
         <span id="fileZoneText">Drop <strong>.bin</strong> here or click to browse</span>
         <span class="file-name" id="fileName"></span>
+      </div>
+
+      <div class="file-zone" id="manifestZone" style="display:block; margin-top:0.75rem;">
+        <input type="file" id="manifest" accept=".json" />
+        <span class="file-icon">🧾</span>
+        <span id="manifestZoneText">Drop signed manifest <strong>.json</strong> here or click to browse</span>
+        <span class="file-name" id="manifestName"></span>
       </div>
 
       <!-- Progress -->
@@ -589,145 +596,186 @@
     </div>
   </div>
 
+  <span id="deviceStatus" style="display:none;">Not connected</span>
+  <pre id="log" style="display:none;"></pre>
+
   <footer>FCCS Flash Tool · WebSerial API · ESP32</footer>
 </div>
-
+<script src="../flasher.js?v=2026-02-28-16"></script>
 <script>
-  // ── State ──────────────────────────────────────────────────────────────────
-  let port = null;
-  let writer = null;
-  let selectedFile = null;
+  const logBody = document.getElementById('logBody');
+  const hiddenLog = document.getElementById('log');
+  const hiddenStatus = document.getElementById('deviceStatus');
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  const state = {
+    sentMagic: false,
+    flashSuccess: false,
+    parsedChars: 0,
+  };
+
   function now() {
-    return new Date().toTimeString().slice(0,8);
+    return new Date().toTimeString().slice(0, 8);
   }
 
-  function log(msg, type = 'default') {
-    const body = document.getElementById('logBody');
-    const line = document.createElement('div');
-    line.className = 'log-line ' + type;
-    line.innerHTML = `<span class="log-time">${now()}</span><span class="log-msg">${msg}</span>`;
-    body.appendChild(line);
-    body.scrollTop = body.scrollHeight;
+  function classifyLog(line) {
+    if (/error|failed|reject|timeout|mismatch|disconnected/i.test(line)) return 'error';
+    if (/success|passed|manifest ok|ready|opened|verified|authorized/i.test(line)) return 'success';
+    if (/warning|unknown|manual/i.test(line)) return 'warn';
+    return 'info';
   }
 
-  function clearLog() {
-    document.getElementById('logBody').innerHTML = '';
+  function appendPrettyLog(line) {
+    if (!line) return;
+    const type = classifyLog(line);
+    const row = document.createElement('div');
+    row.className = 'log-line ' + type;
+    row.innerHTML = `<span class="log-time">${now()}</span><span class="log-msg">${line}</span>`;
+    logBody.appendChild(row);
+    logBody.scrollTop = logBody.scrollHeight;
+
+    if (line.includes('Sent magic: BLDR')) state.sentMagic = true;
+    if (line.includes('Flash result: success')) state.flashSuccess = true;
+    syncStepUi();
   }
 
-  function setStep(n) {
-    ['step1','step2','step3'].forEach((id, i) => {
-      const el = document.getElementById(id);
-      el.classList.remove('active','disabled','done');
-      if (i + 1 < n) el.classList.add('done');
-      else if (i + 1 === n) el.classList.add('active');
-      else el.classList.add('disabled');
+  function syncFromHiddenLog() {
+    const text = hiddenLog.textContent || '';
+    if (text.length <= state.parsedChars) return;
+    const delta = text.slice(state.parsedChars);
+    state.parsedChars = text.length;
+    delta.split('\n').map(x => x.trim()).filter(Boolean).forEach(appendPrettyLog);
+  }
+
+  function setStepClass(el, cls) {
+    el.classList.remove('active', 'done', 'disabled');
+    el.classList.add(cls);
+  }
+
+  function markStepDone(el) {
+    setStepClass(el, 'done');
+    const bubble = el.querySelector('.step-num');
+    if (bubble) bubble.textContent = '✓';
+  }
+
+  function markStepNum(el, num) {
+    const bubble = el.querySelector('.step-num');
+    if (bubble && bubble.textContent !== '✓') bubble.textContent = num;
+  }
+
+  function syncStatusUi() {
+    const status = hiddenStatus.textContent || 'Not connected';
+    const isConnected = !/Not connected|Connection failed/i.test(status);
+
+    const badge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const deviceInfo = document.getElementById('deviceInfo');
+    const deviceName = document.getElementById('deviceName');
+
+    if (isConnected) {
+      badge.classList.add('connected');
+      deviceInfo.classList.add('connected');
+      statusText.textContent = 'Connected';
+    } else {
+      badge.classList.remove('connected');
+      deviceInfo.classList.remove('connected');
+      statusText.textContent = 'No Device';
+    }
+    deviceName.textContent = status;
+  }
+
+  function syncStepUi() {
+    const step1 = document.getElementById('step1');
+    const step2 = document.getElementById('step2');
+    const step3 = document.getElementById('step3');
+    const sendMagic = document.getElementById('sendMagic');
+    const flash = document.getElementById('flash');
+
+    const connected = !/Not connected|Connection failed/i.test(hiddenStatus.textContent || '');
+
+    if (connected) {
+      markStepDone(step1);
+    } else {
+      setStepClass(step1, 'active');
+      markStepNum(step1, '01');
+    }
+
+    if (state.sentMagic) {
+      markStepDone(step2);
+    } else if (sendMagic.disabled) {
+      setStepClass(step2, 'disabled');
+      markStepNum(step2, '02');
+    } else {
+      setStepClass(step2, 'active');
+      markStepNum(step2, '02');
+    }
+
+    if (state.flashSuccess) {
+      markStepDone(step3);
+      const btn = document.getElementById('flash');
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-success');
+      btn.textContent = 'Done ✓';
+    } else if (flash.disabled) {
+      setStepClass(step3, 'disabled');
+      markStepNum(step3, '03');
+    } else {
+      setStepClass(step3, 'active');
+      markStepNum(step3, '03');
+    }
+  }
+
+  function wireFileZone(zoneId, inputId, textId, nameId) {
+    const zone = document.getElementById(zoneId);
+    const input = document.getElementById(inputId);
+    const text = document.getElementById(textId);
+    const name = document.getElementById(nameId);
+
+    zone.addEventListener('click', () => input.click());
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      if (!e.dataTransfer.files || !e.dataTransfer.files[0]) return;
+      const dt = new DataTransfer();
+      dt.items.add(e.dataTransfer.files[0]);
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change'));
+    });
+
+    input.addEventListener('change', () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      text.style.display = 'none';
+      name.style.display = 'block';
+      name.textContent = `${f.name} · ${(f.size / 1024).toFixed(1)} KB`;
     });
   }
 
-  function markDone(stepId) {
-    const el = document.getElementById(stepId);
-    el.classList.remove('active');
-    el.classList.add('done');
-    const num = el.querySelector('.step-num');
-    num.textContent = '✓';
-  }
+  document.querySelector('.log-clear').addEventListener('click', () => {
+    hiddenLog.textContent = '';
+    logBody.innerHTML = '';
+    state.parsedChars = 0;
+    state.sentMagic = false;
+    state.flashSuccess = false;
+    appendPrettyLog('Log cleared');
+  });
 
-  function setConnected(name) {
-    document.getElementById('statusBadge').classList.add('connected');
-    document.getElementById('statusText').textContent = 'Connected';
-    document.getElementById('deviceInfo').classList.add('connected');
-    document.getElementById('deviceName').textContent = name;
-  }
+  wireFileZone('fileZone', 'firmware', 'fileZoneText', 'fileName');
+  wireFileZone('manifestZone', 'manifest', 'manifestZoneText', 'manifestName');
 
-  function setProgress(pct, label) {
-    document.getElementById('progressWrap').classList.add('visible');
-    document.getElementById('progressFill').style.width = pct + '%';
-    document.getElementById('progressPct').textContent = pct + '%';
-    if (label) document.getElementById('progressStatus').textContent = label;
-  }
+  const logObserver = new MutationObserver(syncFromHiddenLog);
+  logObserver.observe(hiddenLog, { childList: true, characterData: true, subtree: true });
 
-  // ── Actions (wire these to your actual WebSerial logic) ───────────────────
-  async function handleConnect() {
-    log('Requesting serial port…', 'info');
-    try {
-      // ─── Replace this block with your real WebSerial connect logic ───────
-      if (!('serial' in navigator)) throw new Error('WebSerial not supported in this browser');
-      port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 115200 });
-      const info = port.getInfo();
-      const name = `USB Device (${info.usbVendorId?.toString(16) ?? '?'}:${info.usbProductId?.toString(16) ?? '?'})`;
-      // ─────────────────────────────────────────────────────────────────────
-      setConnected(name);
-      log('Port opened — ' + name, 'success');
-      markDone('step1');
-      setStep(2);
-    } catch(e) {
-      log('Connect failed: ' + e.message, 'error');
-    }
-  }
+  const statusObserver = new MutationObserver(() => {
+    syncStatusUi();
+    syncStepUi();
+  });
+  statusObserver.observe(hiddenStatus, { childList: true, characterData: true, subtree: true });
 
-  async function handleBldr() {
-    log('Attempting auto-reset…', 'info');
-    try {
-      // ─── Replace with your real BLDR magic sequence ───────────────────────
-      if (port && port.setSignals) {
-        await port.setSignals({ dataTerminalReady: false, requestToSend: true });
-        await new Promise(r => setTimeout(r, 100));
-        await port.setSignals({ dataTerminalReady: true, requestToSend: false });
-        await new Promise(r => setTimeout(r, 50));
-        await port.setSignals({ dataTerminalReady: false });
-      }
-      // ─────────────────────────────────────────────────────────────────────
-      log('BLDR magic sent', 'success');
-      markDone('step2');
-      setStep(3);
-    } catch(e) {
-      log('BLDR failed: ' + e.message, 'error');
-    }
-  }
-
-  async function handleFlash() {
-    if (!selectedFile) { log('No firmware file selected', 'warn'); return; }
-    log(`Flashing ${selectedFile.name} (${(selectedFile.size/1024).toFixed(1)} KB)…`, 'info');
-    // ─── Replace with your real flash write logic ─────────────────────────
-    // Simulated progress for demo purposes:
-    let pct = 0;
-    const interval = setInterval(() => {
-      pct = Math.min(pct + Math.random() * 8, 100);
-      setProgress(Math.round(pct), pct < 100 ? 'Writing…' : 'Verifying…');
-      if (pct >= 100) {
-        clearInterval(interval);
-        setProgress(100, 'Complete');
-        log('Flash complete ✓', 'success');
-        markDone('step3');
-        document.getElementById('btnFlash').className = 'btn btn-success';
-        document.getElementById('btnFlash').textContent = 'Done ✓';
-      }
-    }, 120);
-    // ─────────────────────────────────────────────────────────────────────
-  }
-
-  // ── File handling ─────────────────────────────────────────────────────────
-  function onFileSelected(e) {
-    const f = e.target.files[0];
-    if (!f) return;
-    selectedFile = f;
-    document.getElementById('fileZoneText').style.display = 'none';
-    document.getElementById('fileName').style.display = 'block';
-    document.getElementById('fileName').textContent = f.name + ' · ' + (f.size/1024).toFixed(1) + ' KB';
-    log('Firmware selected: ' + f.name, 'info');
-  }
-
-  function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
-  function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
-  function onDrop(e) {
-    e.preventDefault();
-    e.currentTarget.classList.remove('drag-over');
-    const f = e.dataTransfer.files[0];
-    if (f) { document.getElementById('fileInput').files = e.dataTransfer.files; onFileSelected({ target: { files: [f] } }); }
-  }
+  setInterval(syncStepUi, 300);
+  syncStatusUi();
+  syncStepUi();
 </script>
 </body>
 </html>
