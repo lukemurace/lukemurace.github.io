@@ -2,16 +2,27 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-6';
+const FLASHER_VERSION = '2026-02-28-7';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
 const MAGIC = new Uint8Array([0x42, 0x4c, 0x44, 0x52]); // "BLDR"
+const encoder = new TextEncoder();
+const EXPECTED_DEVICE_ID = 'FCCS_BOOTLOADER';
 const ACK = 0x06;
 const NACK = 0x15;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const textDecoder = new TextDecoder();
 let deviceLineBuffer = '';
+let friendlyDeviceName = 'Not connected';
+
+const setDeviceStatus = (text) => {
+  friendlyDeviceName = text;
+  const statusEl = document.getElementById('deviceStatus');
+  if (statusEl) {
+    statusEl.textContent = text;
+  }
+};
 
 const appendDeviceChunk = (chunk) => {
   if (!chunk) return;
@@ -111,6 +122,50 @@ const sendMagic = async () => {
   await ensureConnected();
   await writer.write(MAGIC);
   log('Sent magic: BLDR');
+};
+
+const verifyIdentity = async (timeoutMs = 1800) => {
+  await ensureConnected();
+
+  const nonce = Math.random().toString(36).slice(2, 10);
+  const expectedReply = `I_AM ${EXPECTED_DEVICE_ID} ${nonce}`;
+  const challenge = `WHOAREYOU? ${nonce}\n`;
+
+  await writer.write(encoder.encode(challenge));
+
+  const reader = port.readable.getReader();
+  const deadline = Date.now() + timeoutMs;
+  let text = '';
+
+  try {
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), remaining));
+      const result = await Promise.race([readPromise, timeoutPromise]);
+
+      if (result.timeout || result.done) {
+        break;
+      }
+
+      if (result.value) {
+        const chunk = textDecoder.decode(result.value, { stream: true });
+        text += chunk;
+        appendDeviceChunk(chunk);
+
+        if (text.includes(expectedReply)) {
+          flushDeviceChunk();
+          setDeviceStatus('FCCS Bootloader (verified)');
+          return true;
+        }
+      }
+    }
+
+    flushDeviceChunk();
+    return false;
+  } finally {
+    reader.releaseLock();
+  }
 };
 
 const waitForBootloaderReady = async (timeoutMs = 2000) => {
@@ -224,15 +279,34 @@ document.getElementById('connect').onclick = async () => {
     deviceLineBuffer = '';
     writer = port.writable.getWriter();
     log('Port opened');
+    setDeviceStatus('Connected (verifying identity...)');
+
+    const verified = await verifyIdentity(1800);
+    if (verified) {
+      log('Identity check passed: FCCS bootloader');
+    } else {
+      const info = port.getInfo ? port.getInfo() : {};
+      const vid = info.usbVendorId !== undefined ? `0x${info.usbVendorId.toString(16)}` : 'unknown';
+      const pid = info.usbProductId !== undefined ? `0x${info.usbProductId.toString(16)}` : 'unknown';
+      setDeviceStatus(`Unknown serial device (VID ${vid}, PID ${pid})`);
+      log('Identity check did not verify FCCS bootloader yet (this can happen if app is running).');
+    }
+
     document.getElementById('sendMagic').disabled = false;
     document.getElementById('flash').disabled = false;
   } catch (e) {
     log('Error: ' + e);
+    setDeviceStatus('Connection failed');
   }
 };
 
 document.getElementById('sendMagic').onclick = async () => {
   try {
+    const verified = await verifyIdentity(800);
+    if (verified) {
+      log('Identity check passed before BLDR');
+    }
+
     try {
       await autoResetEsp();
     } catch (resetErr) {
@@ -262,6 +336,11 @@ document.getElementById('flash').onclick = async () => {
     } catch (resetErr) {
       log('Auto-reset unavailable: ' + resetErr.message);
       log('Please reset the ESP32 manually now.');
+    }
+
+    const verified = await verifyIdentity(2000);
+    if (!verified) {
+      throw new Error('Identity check failed after reset. Not flashing unknown device.');
     }
 
     await sendMagic();
@@ -310,6 +389,7 @@ document.getElementById('flash').onclick = async () => {
     await port.close();
     writer = undefined;
     port = undefined;
+    setDeviceStatus('Not connected');
     document.getElementById('sendMagic').disabled = true;
     document.getElementById('flash').disabled = true;
   } catch (e) {
