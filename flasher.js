@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-3';
+const FLASHER_VERSION = '2026-02-28-4';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -13,6 +13,18 @@ const textDecoder = new TextDecoder();
 const ensureConnected = async () => {
   if (port && writer) return;
   throw new Error('Port not connected. Click Connect first.');
+};
+
+const writePacketized = async (data, packetSize = 256) => {
+  for (let off = 0; off < data.length; off += packetSize) {
+    const end = Math.min(off + packetSize, data.length);
+    await writer.write(data.subarray(off, end));
+
+    // brief pacing so flash-write stalls on device side don't overflow serial buffers
+    if ((off / packetSize) % 32 === 31) {
+      await sleep(2);
+    }
+  }
 };
 
 const sendMagic = async () => {
@@ -179,7 +191,7 @@ document.getElementById('flash').onclick = async () => {
 
     const sizeHeader = new Uint8Array(4);
     new DataView(sizeHeader.buffer).setUint32(0, file.size, true);
-    await writer.write(sizeHeader);
+    await writePacketized(sizeHeader, 4);
     log(`Sent size header: ${file.size} bytes`);
 
     log(`Flashing ${file.name} (${file.size} bytes)`);
@@ -189,7 +201,7 @@ document.getElementById('flash').onclick = async () => {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      await writer.write(value);
+      await writePacketized(value, 256);
       bytesSent += value.length;
       log(`  ${bytesSent} / ${file.size}`);
     }
