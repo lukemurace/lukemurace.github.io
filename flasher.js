@@ -2,11 +2,13 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-4';
+const FLASHER_VERSION = '2026-02-28-5';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
 const MAGIC = new Uint8Array([0x42, 0x4c, 0x44, 0x52]); // "BLDR"
+const ACK = 0x06;
+const NACK = 0x15;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const textDecoder = new TextDecoder();
 
@@ -15,14 +17,68 @@ const ensureConnected = async () => {
   throw new Error('Port not connected. Click Connect first.');
 };
 
-const writePacketized = async (data, packetSize = 256) => {
-  for (let off = 0; off < data.length; off += packetSize) {
-    const end = Math.min(off + packetSize, data.length);
-    await writer.write(data.subarray(off, end));
+const xorChecksum = (bytes) => {
+  let value = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    value ^= bytes[i];
+  }
+  return value & 0xff;
+};
 
-    // brief pacing so flash-write stalls on device side don't overflow serial buffers
-    if ((off / packetSize) % 32 === 31) {
-      await sleep(2);
+const waitForAck = async (reader, timeoutMs = 5000) => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    const readPromise = reader.read();
+    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), remaining));
+    const result = await Promise.race([readPromise, timeoutPromise]);
+
+    if (result.timeout) {
+      return 'timeout';
+    }
+
+    if (result.done) {
+      return 'disconnected';
+    }
+
+    if (result.value) {
+      for (const byte of result.value) {
+        if (byte === ACK) return 'ack';
+        if (byte === NACK) return 'nack';
+      }
+    }
+  }
+
+  return 'timeout';
+};
+
+const sendFramedPayload = async (data, ackReader, frameSize = 128) => {
+  for (let off = 0; off < data.length; off += frameSize) {
+    const end = Math.min(off + frameSize, data.length);
+    const payload = data.subarray(off, end);
+    const frame = new Uint8Array(2 + payload.length + 1);
+
+    frame[0] = payload.length & 0xff;
+    frame[1] = (payload.length >> 8) & 0xff;
+    frame.set(payload, 2);
+    frame[frame.length - 1] = xorChecksum(payload);
+
+    let sent = false;
+    for (let retry = 0; retry < 3; retry++) {
+      await writer.write(frame);
+      const ackResult = await waitForAck(ackReader, 5000);
+      if (ackResult === 'ack') {
+        sent = true;
+        break;
+      }
+      if (ackResult === 'disconnected') {
+        throw new Error('Device disconnected during upload ACK wait');
+      }
+    }
+
+    if (!sent) {
+      throw new Error(`No ACK for frame at offset ${off}`);
     }
   }
 };
@@ -191,19 +247,24 @@ document.getElementById('flash').onclick = async () => {
 
     const sizeHeader = new Uint8Array(4);
     new DataView(sizeHeader.buffer).setUint32(0, file.size, true);
-    await writePacketized(sizeHeader, 4);
+    await writer.write(sizeHeader);
     log(`Sent size header: ${file.size} bytes`);
 
     log(`Flashing ${file.name} (${file.size} bytes)`);
     const reader = file.stream().getReader();
+    const ackReader = port.readable.getReader();
     let bytesSent = 0;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      await writePacketized(value, 256);
-      bytesSent += value.length;
-      log(`  ${bytesSent} / ${file.size}`);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await sendFramedPayload(value, ackReader, 128);
+        bytesSent += value.length;
+        log(`  ${bytesSent} / ${file.size}`);
+      }
+    } finally {
+      ackReader.releaseLock();
     }
 
     log('Upload complete, waiting for bootloader result…');
