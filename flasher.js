@@ -2,6 +2,9 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
+const FLASHER_VERSION = '2026-02-28-2';
+log(`Flasher version: ${FLASHER_VERSION}`);
+
 let port, writer;
 const MAGIC = new Uint8Array([0x42, 0x4c, 0x44, 0x52]); // "BLDR"
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
