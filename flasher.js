@@ -57,6 +57,51 @@ const waitForBootloaderReady = async (timeoutMs = 2000) => {
   }
 };
 
+const waitForUpdateResult = async (timeoutMs = 20000) => {
+  await ensureConnected();
+  const reader = port.readable.getReader();
+  const deadline = Date.now() + timeoutMs;
+  let text = '';
+
+  try {
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), remaining));
+      const result = await Promise.race([readPromise, timeoutPromise]);
+
+      if (result.timeout) {
+        return { status: 'timeout', text };
+      }
+
+      if (result.done) {
+        if (text.includes('update successful')) return { status: 'success', text };
+        if (text.includes('update failed') || text.includes('Update.end failed') || text.includes('Write failed')) {
+          return { status: 'failure', text };
+        }
+        return { status: 'disconnected', text };
+      }
+
+      if (result.value) {
+        const chunk = textDecoder.decode(result.value, { stream: true });
+        text += chunk;
+        if (chunk.trim().length > 0) {
+          log('Device: ' + chunk.trim());
+        }
+
+        if (text.includes('update successful')) return { status: 'success', text };
+        if (text.includes('update failed') || text.includes('Update.end failed') || text.includes('Write failed')) {
+          return { status: 'failure', text };
+        }
+      }
+    }
+
+    return { status: 'timeout', text };
+  } finally {
+    reader.releaseLock();
+  }
+};
+
 const autoResetEsp = async () => {
   await ensureConnected();
 
@@ -144,12 +189,17 @@ document.getElementById('flash').onclick = async () => {
       log(`  ${bytesSent} / ${file.size}`);
     }
 
-    log('Upload complete, waiting for reply…');
-
-    const rdr = port.readable.getReader();
-    const { value } = await rdr.read();
-    if (value) log('Device replied: ' + new TextDecoder().decode(value));
-    rdr.releaseLock();
+    log('Upload complete, waiting for bootloader result…');
+    const result = await waitForUpdateResult(20000);
+    if (result.status === 'success') {
+      log('Flash result: success');
+    } else if (result.status === 'failure') {
+      throw new Error('Flash result: failure (device reported update error)');
+    } else if (result.status === 'disconnected') {
+      log('Device disconnected/rebooted before explicit success text');
+    } else {
+      log('No final result line before timeout; check device behavior/logs');
+    }
 
     log('Closing port');
     writer.releaseLock();
