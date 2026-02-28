@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FCCS Flash Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0c0f;
+    --surface: #111418;
+    --border: #1e2530;
+    --border-glow: #2a3a52;
+    --text: #cdd6e8;
+    --muted: #4a5568;
+    --accent: #3b82f6;
+    --accent-glow: rgba(59,130,246,0.15);
+    --accent-dim: #1d4ed8;
+    --green: #10b981;
+    --green-glow: rgba(16,185,129,0.15);
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
+
+  html { font-size: 16px; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* Ambient grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Top glow blob */
+  body::after {
+    content: '';
+    position: fixed;
+    top: -200px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 700px;
+    height: 400px;
+    background: radial-gradient(ellipse, rgba(59,130,246,0.08) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 580px;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    animation: fadeUp 0.6s ease both;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .logo-block {}
+
+  .logo-eyebrow {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.3rem;
+    opacity: 0.8;
+  }
+
+  .logo-title {
+    font-family: var(--display);
+    font-size: 2rem;
+    font-weight: 800;
+    color: #fff;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+
+  .logo-title span { color: var(--accent); }
+
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 0.25rem;
+    transition: all 0.4s ease;
+  }
+
+  .status-badge.connected {
+    color: var(--green);
+    border-color: rgba(16,185,129,0.3);
+    background: var(--green-glow);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.4s ease;
+    flex-shrink: 0;
+  }
+
+  .status-badge.connected .status-dot {
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* Device info */
+  .device-info {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+    transition: border-color 0.4s ease;
+  }
+
+  .device-info.connected {
+    border-color: rgba(16,185,129,0.25);
+    color: var(--text);
+  }
+
+  .device-icon {
+    font-size: 1.2rem;
+    opacity: 0.6;
+  }
+
+  .device-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.15rem;
+  }
+
+  .device-name {
+    font-size: 0.8rem;
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* Steps */
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: grid;
+    grid-template-columns: 2rem 1fr auto;
+    align-items: center;
+    gap: 1rem;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .step::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, var(--accent-glow) 0%, transparent 60%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+
+  .step:hover { border-color: var(--border-glow); }
+  .step:hover::before { opacity: 1; }
+
+  .step.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 30px var(--accent-glow); }
+  .step.active::before { opacity: 1; }
+
+  .step.done { border-color: rgba(16,185,129,0.3); }
+  .step.done::before { background: linear-gradient(135deg, var(--green-glow) 0%, transparent 60%); opacity: 1; }
+  .step.disabled { opacity: 0.45; pointer-events: none; }
+
+  .step-num {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    border: 1px solid var(--border-glow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--muted);
+    flex-shrink: 0;
+    transition: all 0.3s ease;
+    position: relative;
+    z-index: 1;
+  }
+
+  .step.active .step-num {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-glow);
+  }
+
+  .step.done .step-num {
+    border-color: var(--green);
+    background: var(--green-glow);
+    color: var(--green);
+  }
+
+  .step-body { position: relative; z-index: 1; }
+
+  .step-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.02em;
+    margin-bottom: 0.2rem;
+    text-transform: uppercase;
+  }
+
+  .step-desc {
+    font-size: 0.68rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* Buttons */
+  .btn {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border: none;
+    border-radius: 7px;
+    padding: 0.6rem 1.1rem;
+    transition: all 0.2s ease;
+    position: relative;
+    z-index: 1;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 20px rgba(59,130,246,0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+  }
+
+  .btn-primary:hover {
+    background: #60a5fa;
+    box-shadow: 0 0 30px rgba(59,130,246,0.5), inset 0 1px 0 rgba(255,255,255,0.15);
+    transform: translateY(-1px);
+  }
+
+  .btn-primary:active { transform: translateY(0); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+
+  .btn-ghost:hover { border-color: var(--border-glow); color: var(--text); }
+
+  .btn-success {
+    background: transparent;
+    color: var(--green);
+    border: 1px solid rgba(16,185,129,0.4);
+    pointer-events: none;
+  }
+
+  /* File upload area */
+  .file-zone {
+    grid-column: 1 / -1;
+    border: 1px dashed var(--border-glow);
+    border-radius: 8px;
+    padding: 1.25rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: rgba(59,130,246,0.02);
+    font-size: 0.7rem;
+    color: var(--muted);
+    display: none;
+  }
+
+  .file-zone:hover, .file-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+    color: var(--text);
+  }
+
+  .file-zone input { display: none; }
+
+  .file-zone .file-icon { font-size: 1.5rem; display: block; margin-bottom: 0.5rem; }
+
+  .file-zone .file-name {
+    color: var(--accent);
+    font-weight: 700;
+    display: none;
+  }
+
+  .step-3 .file-zone { display: block; }
+
+  /* Progress bar */
+  .progress-wrap {
+    grid-column: 1 / -1;
+    display: none;
+  }
+
+  .progress-wrap.visible { display: block; }
+
+  .progress-bar-bg {
+    background: var(--border);
+    border-radius: 999px;
+    height: 4px;
+    overflow: hidden;
+    margin-bottom: 0.4rem;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    border-radius: 999px;
+    width: 0%;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 8px var(--accent);
+  }
+
+  .progress-label {
+    font-size: 0.65rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Log */
+  .log-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .log-header-left { display: flex; align-items: center; gap: 0.5rem; }
+
+  .log-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+  }
+
+  .log-clear {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    cursor: pointer;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    transition: color 0.2s;
+  }
+
+  .log-clear:hover { color: var(--text); }
+
+  .log-body {
+    padding: 1rem 1.25rem;
+    height: 140px;
+    overflow-y: auto;
+    font-size: 0.7rem;
+    line-height: 1.8;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .log-body::-webkit-scrollbar { width: 4px; }
+  .log-body::-webkit-scrollbar-track { background: transparent; }
+  .log-body::-webkit-scrollbar-thumb { background: var(--border-glow); border-radius: 4px; }
+
+  .log-line { display: flex; gap: 0.75rem; }
+  .log-time { color: var(--border-glow); flex-shrink: 0; }
+  .log-line.success .log-msg { color: var(--green); }
+  .log-line.error .log-msg { color: var(--red); }
+  .log-line.info .log-msg { color: var(--accent); }
+  .log-line.warn .log-msg { color: var(--amber); }
+
+  /* Note */
+  .note {
+    background: rgba(245,158,11,0.05);
+    border: 1px solid rgba(245,158,11,0.15);
+    border-radius: 8px;
+    padding: 0.85rem 1.1rem;
+    font-size: 0.68rem;
+    color: var(--muted);
+    line-height: 1.6;
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .note-icon { color: var(--amber); flex-shrink: 0; }
+
+  /* Footer */
+  footer {
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--border-glow);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <header>
+    <div class="logo-block">
+      <div class="logo-eyebrow">ESP32 · WebSerial</div>
+      <div class="logo-title">FCCS<span>.</span>Flash</div>
+    </div>
+    <div class="status-badge" id="statusBadge">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">No Device</span>
+    </div>
+  </header>
+
+  <!-- Device info -->
+  <div class="device-info" id="deviceInfo">
+    <div class="device-icon">⚡</div>
+    <div>
+      <div class="device-label">Connected Device</div>
+      <div class="device-name" id="deviceName">Not connected</div>
+    </div>
+  </div>
+
+  <!-- Steps -->
+  <div class="steps">
+
+    <!-- Step 1: Connect -->
+    <div class="step active step-1" id="step1">
+      <div class="step-num">01</div>
+      <div class="step-body">
+        <div class="step-title">Connect to FCCS</div>
+        <div class="step-desc">Select your ESP32 serial port via WebSerial</div>
+      </div>
+      <button class="btn btn-primary" id="btnConnect" onclick="handleConnect()">Connect</button>
+    </div>
+
+    <!-- Step 2: BLDR -->
+    <div class="step disabled step-2" id="step2">
+      <div class="step-num">02</div>
+      <div class="step-body">
+        <div class="step-title">Send BLDR Magic</div>
+        <div class="step-desc">Trigger bootloader — auto-reset will be attempted first</div>
+      </div>
+      <button class="btn btn-primary" id="btnBldr" onclick="handleBldr()">Send</button>
+    </div>
+
+    <!-- Step 3: Flash -->
+    <div class="step disabled step-3" id="step3">
+      <div class="step-num">03</div>
+      <div class="step-body">
+        <div class="step-title">Flash Firmware</div>
+        <div class="step-desc">Upload a .bin file to flash to the device</div>
+      </div>
+      <button class="btn btn-primary" id="btnFlash" onclick="handleFlash()">Flash</button>
+
+      <!-- File drop zone (shown in step 3) -->
+      <div class="file-zone" id="fileZone" onclick="document.getElementById('fileInput').click()" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+        <input type="file" id="fileInput" accept=".bin" onchange="onFileSelected(event)" />
+        <span class="file-icon">📦</span>
+        <span id="fileZoneText">Drop <strong>.bin</strong> here or click to browse</span>
+        <span class="file-name" id="fileName"></span>
+      </div>
+
+      <!-- Progress -->
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-label">
+          <span id="progressStatus">Writing…</span>
+          <span id="progressPct">0%</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Note -->
+  <div class="note">
+    <span class="note-icon">⚠</span>
+    <span>The tool will attempt auto-reset before sending <strong style="color:#f59e0b">BLDR</strong>. If your USB adapter doesn't expose control lines, reset manually before clicking Send.</span>
+  </div>
+
+  <!-- Log -->
+  <div class="log-panel">
+    <div class="log-header">
+      <div class="log-header-left">
+        <div class="log-dot"></div>
+        Serial Log
+      </div>
+      <button class="log-clear" onclick="clearLog()">Clear</button>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-line info"><span class="log-time">00:00:00</span><span class="log-msg">FCCS Flash Tool ready — waiting for connection…</span></div>
+    </div>
+  </div>
+
+  <footer>FCCS Flash Tool · WebSerial API · ESP32</footer>
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let port = null;
+  let writer = null;
+  let selectedFile = null;
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function now() {
+    return new Date().toTimeString().slice(0,8);
+  }
+
+  function log(msg, type = 'default') {
+    const body = document.getElementById('logBody');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + type;
+    line.innerHTML = `<span class="log-time">${now()}</span><span class="log-msg">${msg}</span>`;
+    body.appendChild(line);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function clearLog() {
+    document.getElementById('logBody').innerHTML = '';
+  }
+
+  function setStep(n) {
+    ['step1','step2','step3'].forEach((id, i) => {
+      const el = document.getElementById(id);
+      el.classList.remove('active','disabled','done');
+      if (i + 1 < n) el.classList.add('done');
+      else if (i + 1 === n) el.classList.add('active');
+      else el.classList.add('disabled');
+    });
+  }
+
+  function markDone(stepId) {
+    const el = document.getElementById(stepId);
+    el.classList.remove('active');
+    el.classList.add('done');
+    const num = el.querySelector('.step-num');
+    num.textContent = '✓';
+  }
+
+  function setConnected(name) {
+    document.getElementById('statusBadge').classList.add('connected');
+    document.getElementById('statusText').textContent = 'Connected';
+    document.getElementById('deviceInfo').classList.add('connected');
+    document.getElementById('deviceName').textContent = name;
+  }
+
+  function setProgress(pct, label) {
+    document.getElementById('progressWrap').classList.add('visible');
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressPct').textContent = pct + '%';
+    if (label) document.getElementById('progressStatus').textContent = label;
+  }
+
+  // ── Actions (wire these to your actual WebSerial logic) ───────────────────
+  async function handleConnect() {
+    log('Requesting serial port…', 'info');
+    try {
+      // ─── Replace this block with your real WebSerial connect logic ───────
+      if (!('serial' in navigator)) throw new Error('WebSerial not supported in this browser');
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      const info = port.getInfo();
+      const name = `USB Device (${info.usbVendorId?.toString(16) ?? '?'}:${info.usbProductId?.toString(16) ?? '?'})`;
+      // ─────────────────────────────────────────────────────────────────────
+      setConnected(name);
+      log('Port opened — ' + name, 'success');
+      markDone('step1');
+      setStep(2);
+    } catch(e) {
+      log('Connect failed: ' + e.message, 'error');
+    }
+  }
+
+  async function handleBldr() {
+    log('Attempting auto-reset…', 'info');
+    try {
+      // ─── Replace with your real BLDR magic sequence ───────────────────────
+      if (port && port.setSignals) {
+        await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+        await new Promise(r => setTimeout(r, 100));
+        await port.setSignals({ dataTerminalReady: true, requestToSend: false });
+        await new Promise(r => setTimeout(r, 50));
+        await port.setSignals({ dataTerminalReady: false });
+      }
+      // ─────────────────────────────────────────────────────────────────────
+      log('BLDR magic sent', 'success');
+      markDone('step2');
+      setStep(3);
+    } catch(e) {
+      log('BLDR failed: ' + e.message, 'error');
+    }
+  }
+
+  async function handleFlash() {
+    if (!selectedFile) { log('No firmware file selected', 'warn'); return; }
+    log(`Flashing ${selectedFile.name} (${(selectedFile.size/1024).toFixed(1)} KB)…`, 'info');
+    // ─── Replace with your real flash write logic ─────────────────────────
+    // Simulated progress for demo purposes:
+    let pct = 0;
+    const interval = setInterval(() => {
+      pct = Math.min(pct + Math.random() * 8, 100);
+      setProgress(Math.round(pct), pct < 100 ? 'Writing…' : 'Verifying…');
+      if (pct >= 100) {
+        clearInterval(interval);
+        setProgress(100, 'Complete');
+        log('Flash complete ✓', 'success');
+        markDone('step3');
+        document.getElementById('btnFlash').className = 'btn btn-success';
+        document.getElementById('btnFlash').textContent = 'Done ✓';
+      }
+    }, 120);
+    // ─────────────────────────────────────────────────────────────────────
+  }
+
+  // ── File handling ─────────────────────────────────────────────────────────
+  function onFileSelected(e) {
+    const f = e.target.files[0];
+    if (!f) return;
+    selectedFile = f;
+    document.getElementById('fileZoneText').style.display = 'none';
+    document.getElementById('fileName').style.display = 'block';
+    document.getElementById('fileName').textContent = f.name + ' · ' + (f.size/1024).toFixed(1) + ' KB';
+    log('Firmware selected: ' + f.name, 'info');
+  }
+
+  function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+  function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+  function onDrop(e) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f) { document.getElementById('fileInput').files = e.dataTransfer.files; onFileSelected({ target: { files: [f] } }); }
+  }
+</script>
+</body>
+</html>
