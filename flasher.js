@@ -5,6 +5,7 @@ const log = msg => {
 let port, writer;
 const MAGIC = new Uint8Array([0x42, 0x4c, 0x44, 0x52]); // "BLDR"
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const textDecoder = new TextDecoder();
 
 const ensureConnected = async () => {
   if (port && writer) return;
@@ -15,6 +16,45 @@ const sendMagic = async () => {
   await ensureConnected();
   await writer.write(MAGIC);
   log('Sent magic: BLDR');
+};
+
+const waitForBootloaderReady = async (timeoutMs = 2000) => {
+  await ensureConnected();
+  const reader = port.readable.getReader();
+  const deadline = Date.now() + timeoutMs;
+  let text = '';
+
+  try {
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), remaining));
+      const result = await Promise.race([readPromise, timeoutPromise]);
+
+      if (result.timeout) {
+        break;
+      }
+
+      if (result.done) {
+        break;
+      }
+
+      if (result.value) {
+        const chunk = textDecoder.decode(result.value, { stream: true });
+        text += chunk;
+        if (chunk.trim().length > 0) {
+          log('Device: ' + chunk.trim());
+        }
+        if (text.includes('magic OK, receiving image...')) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  } finally {
+    reader.releaseLock();
+  }
 };
 
 const autoResetEsp = async () => {
@@ -55,6 +95,12 @@ document.getElementById('sendMagic').onclick = async () => {
       log('Auto-reset unavailable: ' + resetErr.message);
     }
     await sendMagic();
+    const ready = await waitForBootloaderReady(2500);
+    if (ready) {
+      log('Bootloader handshake confirmed');
+    } else {
+      log('No magic OK reply yet (timing/manual reset may be needed)');
+    }
   } catch (e) {
     log('Error: ' + e.message);
   }
@@ -75,7 +121,11 @@ document.getElementById('flash').onclick = async () => {
     }
 
     await sendMagic();
-    await sleep(50);
+    const ready = await waitForBootloaderReady(2500);
+    if (!ready) {
+      throw new Error('Bootloader did not confirm BLDR (missing "magic OK"). Reset and try again.');
+    }
+    log('Bootloader ready, starting upload');
 
     log(`Flashing ${file.name} (${file.size} bytes)`);
     const reader = file.stream().getReader();
