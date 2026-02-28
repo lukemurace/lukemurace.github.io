@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-9';
+const FLASHER_VERSION = '2026-02-28-10';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -24,6 +24,10 @@ const setDeviceStatus = (text) => {
   }
 };
 
+const shouldHideDeviceLine = (line) => {
+  return /^ESP-ROM:/i.test(line);
+};
+
 const appendDeviceChunk = (chunk) => {
   if (!chunk) return;
   deviceLineBuffer += chunk.replace(/\r/g, '');
@@ -34,6 +38,9 @@ const appendDeviceChunk = (chunk) => {
   for (const line of parts) {
     const trimmed = line.trim();
     if (trimmed.length > 0) {
+      if (shouldHideDeviceLine(trimmed)) {
+        continue;
+      }
       log('Device: ' + trimmed);
     }
   }
@@ -42,7 +49,9 @@ const appendDeviceChunk = (chunk) => {
 const flushDeviceChunk = () => {
   const trimmed = deviceLineBuffer.trim();
   if (trimmed.length > 0) {
-    log('Device: ' + trimmed);
+    if (!shouldHideDeviceLine(trimmed)) {
+      log('Device: ' + trimmed);
+    }
   }
   deviceLineBuffer = '';
 };
