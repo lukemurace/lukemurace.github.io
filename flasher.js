@@ -127,6 +127,11 @@ document.getElementById('flash').onclick = async () => {
     }
     log('Bootloader ready, starting upload');
 
+    const sizeHeader = new Uint8Array(4);
+    new DataView(sizeHeader.buffer).setUint32(0, file.size, true);
+    await writer.write(sizeHeader);
+    log(`Sent size header: ${file.size} bytes`);
+
     log(`Flashing ${file.name} (${file.size} bytes)`);
     const reader = file.stream().getReader();
     let bytesSent = 0;
