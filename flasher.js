@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-5';
+const FLASHER_VERSION = '2026-02-28-6';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -11,6 +11,30 @@ const ACK = 0x06;
 const NACK = 0x15;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const textDecoder = new TextDecoder();
+let deviceLineBuffer = '';
+
+const appendDeviceChunk = (chunk) => {
+  if (!chunk) return;
+  deviceLineBuffer += chunk.replace(/\r/g, '');
+
+  const parts = deviceLineBuffer.split('\n');
+  deviceLineBuffer = parts.pop();
+
+  for (const line of parts) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) {
+      log('Device: ' + trimmed);
+    }
+  }
+};
+
+const flushDeviceChunk = () => {
+  const trimmed = deviceLineBuffer.trim();
+  if (trimmed.length > 0) {
+    log('Device: ' + trimmed);
+  }
+  deviceLineBuffer = '';
+};
 
 const ensureConnected = async () => {
   if (port && writer) return;
@@ -113,15 +137,15 @@ const waitForBootloaderReady = async (timeoutMs = 2000) => {
       if (result.value) {
         const chunk = textDecoder.decode(result.value, { stream: true });
         text += chunk;
-        if (chunk.trim().length > 0) {
-          log('Device: ' + chunk.trim());
-        }
+        appendDeviceChunk(chunk);
         if (text.includes('magic OK, receiving image...')) {
+          flushDeviceChunk();
           return true;
         }
       }
     }
 
+    flushDeviceChunk();
     return false;
   } finally {
     reader.releaseLock();
@@ -142,10 +166,12 @@ const waitForUpdateResult = async (timeoutMs = 20000) => {
       const result = await Promise.race([readPromise, timeoutPromise]);
 
       if (result.timeout) {
+        flushDeviceChunk();
         return { status: 'timeout', text };
       }
 
       if (result.done) {
+        flushDeviceChunk();
         if (text.includes('RESULT:OK')) return { status: 'success', text };
         if (text.includes('RESULT:FAIL')) return { status: 'failure', text };
         if (text.includes('update successful')) return { status: 'success', text };
@@ -158,9 +184,7 @@ const waitForUpdateResult = async (timeoutMs = 20000) => {
       if (result.value) {
         const chunk = textDecoder.decode(result.value, { stream: true });
         text += chunk;
-        if (chunk.trim().length > 0) {
-          log('Device: ' + chunk.trim());
-        }
+        appendDeviceChunk(chunk);
 
         if (text.includes('RESULT:OK') || text.includes('update successful')) return { status: 'success', text };
         if (text.includes('RESULT:FAIL') || text.includes('update failed') || text.includes('Update.end failed') || text.includes('Write failed') || text.includes('timeout waiting for data') || text.includes('invalid firmware size') || text.includes('missing firmware size header')) {
@@ -169,6 +193,7 @@ const waitForUpdateResult = async (timeoutMs = 20000) => {
       }
     }
 
+    flushDeviceChunk();
     return { status: 'timeout', text };
   } finally {
     reader.releaseLock();
@@ -196,6 +221,7 @@ document.getElementById('connect').onclick = async () => {
       // filters: [{ vendorId: 0x2341 }]  
     });
     await port.open({ baudRate: 115200 });
+    deviceLineBuffer = '';
     writer = port.writable.getWriter();
     log('Port opened');
     document.getElementById('sendMagic').disabled = false;
