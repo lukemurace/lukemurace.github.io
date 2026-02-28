@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-12';
+const FLASHER_VERSION = '2026-02-28-13';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -15,6 +15,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const textDecoder = new TextDecoder();
 let deviceLineBuffer = '';
 let friendlyDeviceName = 'Not connected';
+let connectedDeviceUid = null;
 
 const setDeviceStatus = (text) => {
   friendlyDeviceName = text;
@@ -95,6 +96,32 @@ const base64ToBytes = (base64) => {
   return bytes;
 };
 
+const normalizeDeviceIdHex = (value) => {
+  if (typeof value !== 'string') {
+    throw new Error('Manifest device_id must be a string');
+  }
+  const normalized = value.trim().toUpperCase().replace(/^0X/, '');
+  if (!/^[0-9A-F]{16}$/.test(normalized)) {
+    throw new Error('Manifest device_id must be 16 hex characters (64-bit eFuse UID)');
+  }
+  return normalized;
+};
+
+const deviceIdHexToLittleEndianBytes = (hex) => {
+  const value = BigInt('0x' + hex);
+  const bytes = new Uint8Array(8);
+  for (let i = 0n; i < 8n; i++) {
+    bytes[Number(i)] = Number((value >> (8n * i)) & 0xffn);
+  }
+  return bytes;
+};
+
+const extractDeviceUidFromText = (text) => {
+  const match = text.match(/UID:([0-9A-Fa-f]{16})|DEVICE_UID:([0-9A-Fa-f]{16})/);
+  if (!match) return null;
+  return (match[1] || match[2]).toUpperCase();
+};
+
 const buildSignedManifestPacket = (manifest, actualFileSize) => {
   if (!Number.isInteger(manifest.version) || manifest.version < 0) {
     throw new Error('Manifest version must be a non-negative integer');
@@ -108,18 +135,21 @@ const buildSignedManifestPacket = (manifest, actualFileSize) => {
 
   const hashBytes = hexToBytes(manifest.sha256);
   const signatureBytes = base64ToBytes(manifest.signature);
+  const manifestDeviceId = normalizeDeviceIdHex(manifest.device_id);
+  const deviceIdBytes = deviceIdHexToLittleEndianBytes(manifestDeviceId);
   if (signatureBytes.length === 0 || signatureBytes.length > 512) {
     throw new Error('Manifest signature length is invalid');
   }
 
-  const header = new Uint8Array(4 + 4 + 32 + 2);
+  const header = new Uint8Array(4 + 4 + 32 + 8 + 2);
   const view = new DataView(header.buffer);
   view.setUint32(0, manifest.size, true);
   view.setUint32(4, manifest.version, true);
   header.set(hashBytes, 8);
-  view.setUint16(40, signatureBytes.length, true);
+  header.set(deviceIdBytes, 40);
+  view.setUint16(48, signatureBytes.length, true);
 
-  return { header, signatureBytes, hashBytes };
+  return { header, signatureBytes, hashBytes, manifestDeviceId };
 };
 
 const waitForAck = async (reader, timeoutMs = 5000) => {
@@ -215,9 +245,15 @@ const verifyIdentity = async (timeoutMs = 1800) => {
         text += chunk;
         appendDeviceChunk(chunk);
 
+        const parsedUid = extractDeviceUidFromText(text);
+        if (parsedUid) {
+          connectedDeviceUid = parsedUid;
+        }
+
         if (text.includes(expectedReply)) {
           flushDeviceChunk();
-          setDeviceStatus('FCCS Bootloader (verified)');
+          const suffix = connectedDeviceUid ? ` (${connectedDeviceUid})` : '';
+          setDeviceStatus(`FCCS Bootloader (verified)${suffix}`);
           return true;
         }
       }
@@ -302,7 +338,8 @@ const waitForManifestReady = async (timeoutMs = 5000) => {
           text.includes('missing signed manifest header') ||
           text.includes('invalid signature length') ||
           text.includes('missing signature payload') ||
-          text.includes('invalid firmware size')
+          text.includes('invalid firmware size') ||
+          text.includes('device mismatch')
         ) {
           flushDeviceChunk();
           return { status: 'error', text };
@@ -470,6 +507,12 @@ document.getElementById('flash').onclick = async () => {
     const verified = await verifyIdentity(2000);
     if (!verified) {
       throw new Error('Identity check failed after reset. Not flashing unknown device.');
+    }
+    if (!connectedDeviceUid) {
+      throw new Error('Could not read target device UID from bootloader.');
+    }
+    if (signedPacket.manifestDeviceId !== connectedDeviceUid) {
+      throw new Error(`Manifest targets ${signedPacket.manifestDeviceId}, but connected device is ${connectedDeviceUid}.`);
     }
 
     await sendMagic();
