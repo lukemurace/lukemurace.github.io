@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-7';
+const FLASHER_VERSION = '2026-02-28-8';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -271,6 +271,15 @@ const autoResetEsp = async () => {
 
 document.getElementById('connect').onclick = async () => {
   try {
+    if (port && writer) {
+      log('Port already open');
+      const verified = await verifyIdentity(1000);
+      if (verified) {
+        log('Identity check passed: FCCS bootloader');
+      }
+      return;
+    }
+
     port = await navigator.serial.requestPort({
       // optional filter, e.g. vendorId/productId
       // filters: [{ vendorId: 0x2341 }]  
@@ -295,6 +304,10 @@ document.getElementById('connect').onclick = async () => {
     document.getElementById('sendMagic').disabled = false;
     document.getElementById('flash').disabled = false;
   } catch (e) {
+    if (e && e.name === 'NotFoundError') {
+      log('Connect cancelled (no port selected)');
+      return;
+    }
     log('Error: ' + e);
     setDeviceStatus('Connection failed');
   }
