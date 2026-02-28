@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-11';
+const FLASHER_VERSION = '2026-02-28-12';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -269,6 +269,54 @@ const waitForBootloaderReady = async (timeoutMs = 2000) => {
   }
 };
 
+const waitForManifestReady = async (timeoutMs = 5000) => {
+  await ensureConnected();
+  const reader = port.readable.getReader();
+  const deadline = Date.now() + timeoutMs;
+  let text = '';
+
+  try {
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), remaining));
+      const result = await Promise.race([readPromise, timeoutPromise]);
+
+      if (result.timeout) {
+        break;
+      }
+
+      if (result.done) {
+        break;
+      }
+
+      if (result.value) {
+        const chunk = textDecoder.decode(result.value, { stream: true });
+        text += chunk;
+        appendDeviceChunk(chunk);
+        if (text.includes('manifest OK')) {
+          flushDeviceChunk();
+          return { status: 'ready', text };
+        }
+        if (
+          text.includes('missing signed manifest header') ||
+          text.includes('invalid signature length') ||
+          text.includes('missing signature payload') ||
+          text.includes('invalid firmware size')
+        ) {
+          flushDeviceChunk();
+          return { status: 'error', text };
+        }
+      }
+    }
+
+    flushDeviceChunk();
+    return { status: 'timeout', text };
+  } finally {
+    reader.releaseLock();
+  }
+};
+
 const waitForUpdateResult = async (timeoutMs = 20000) => {
   await ensureConnected();
   const reader = port.readable.getReader();
@@ -434,6 +482,14 @@ document.getElementById('flash').onclick = async () => {
     await writer.write(signedPacket.header);
     await writer.write(signedPacket.signatureBytes);
     log(`Sent signed manifest: v${manifest.version}, ${file.size} bytes, sig ${signedPacket.signatureBytes.length} bytes`);
+
+    const manifestReady = await waitForManifestReady(7000);
+    if (manifestReady.status === 'error') {
+      throw new Error('Bootloader rejected signed manifest. Check device log for parse/signature details.');
+    }
+    if (manifestReady.status !== 'ready') {
+      throw new Error('Bootloader did not confirm manifest readiness (missing "manifest OK").');
+    }
 
     log(`Flashing ${file.name} (${file.size} bytes)`);
     const reader = file.stream().getReader();
