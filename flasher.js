@@ -4,6 +4,7 @@ const log = msg => {
 
 let port, writer;
 const MAGIC = new Uint8Array([0x42, 0x4c, 0x44, 0x52]); // "BLDR"
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const ensureConnected = async () => {
   if (port && writer) return;
@@ -14,6 +15,20 @@ const sendMagic = async () => {
   await ensureConnected();
   await writer.write(MAGIC);
   log('Sent magic: BLDR');
+};
+
+const autoResetEsp = async () => {
+  await ensureConnected();
+
+  // Common USB-UART reset pulse pattern for ESP boards.
+  // Not all adapters expose these lines in Web Serial.
+  await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+  await sleep(40);
+  await port.setSignals({ dataTerminalReady: true, requestToSend: false });
+  await sleep(120);
+  await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+  await sleep(250);
+  log('Auto-reset pulse sent');
 };
 
 document.getElementById('connect').onclick = async () => {
@@ -34,6 +49,11 @@ document.getElementById('connect').onclick = async () => {
 
 document.getElementById('sendMagic').onclick = async () => {
   try {
+    try {
+      await autoResetEsp();
+    } catch (resetErr) {
+      log('Auto-reset unavailable: ' + resetErr.message);
+    }
     await sendMagic();
   } catch (e) {
     log('Error: ' + e.message);
@@ -46,9 +66,16 @@ document.getElementById('flash').onclick = async () => {
 
   try {
     await ensureConnected();
-    log('Reset the ESP32 now (if not already reset).');
+
+    try {
+      await autoResetEsp();
+    } catch (resetErr) {
+      log('Auto-reset unavailable: ' + resetErr.message);
+      log('Please reset the ESP32 manually now.');
+    }
+
     await sendMagic();
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await sleep(50);
 
     log(`Flashing ${file.name} (${file.size} bytes)`);
     const reader = file.stream().getReader();
