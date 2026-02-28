@@ -523,7 +523,7 @@
       <div class="step-num">01</div>
       <div class="step-body">
         <div class="step-title">Connect to FCCS</div>
-        <div class="step-desc">Select your ESP32 serial port via WebSerial</div>
+        <div class="step-desc">Select your FCCS device from the list of available USB ports. (usually appears as USB JTAG)</div>
       </div>
       <button class="btn btn-primary" id="connect">Connect</button>
     </div>
@@ -532,8 +532,8 @@
     <div class="step disabled step-2" id="step2">
       <div class="step-num">02</div>
       <div class="step-body">
-        <div class="step-title">Send BLDR Magic</div>
-        <div class="step-desc">Trigger bootloader — auto-reset will be attempted first</div>
+        <div class="step-title">Send magic wake packet</div>
+        <div class="step-desc">Checks your FCCS connection to your PC, ensuring it is ready for flashing.</div>
       </div>
       <button class="btn btn-primary" id="sendMagic" disabled>Send</button>
     </div>
@@ -579,7 +579,7 @@
   <!-- Note -->
   <div class="note">
     <span class="note-icon">⚠</span>
-    <span>The tool will attempt auto-reset before sending <strong style="color:#f59e0b">BLDR</strong>. If your USB adapter doesn't expose control lines, reset manually before clicking Send.</span>
+    <span>Your FCCS may restart multiple times during the flashing process. If your FCCS fails to connect, please check your USB cable and try again.</span>
   </div>
 
   <!-- Log -->
@@ -599,7 +599,7 @@
   <span id="deviceStatus" style="display:none;">Not connected</span>
   <pre id="log" style="display:none;"></pre>
 
-  <footer>FCCS Flash Tool · WebSerial API · ESP32</footer>
+  <footer>FCCS UPDATER TOOL BY LUKE MURACE · FLASHING UNAUTHORISED HARDWARE STRICTLY PROHIBITED</footer>
 </div>
 <script src="../flasher.js?v=2026-02-28-16"></script>
 <script>
