@@ -2,13 +2,13 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-8';
+const FLASHER_VERSION = '2026-02-28-9';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
 const MAGIC = new Uint8Array([0x42, 0x4c, 0x44, 0x52]); // "BLDR"
 const encoder = new TextEncoder();
-const EXPECTED_DEVICE_ID = 'FCCS_BOOTLOADER';
+const EXPECTED_DEVICE_ID = 'GENUINE_FCCS';
 const ACK = 0x06;
 const NACK = 0x15;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -292,13 +292,13 @@ document.getElementById('connect').onclick = async () => {
 
     const verified = await verifyIdentity(1800);
     if (verified) {
-      log('Identity check passed: FCCS bootloader');
+      log('Identity check passed: Genuine FCCS bootloader');
     } else {
       const info = port.getInfo ? port.getInfo() : {};
       const vid = info.usbVendorId !== undefined ? `0x${info.usbVendorId.toString(16)}` : 'unknown';
       const pid = info.usbProductId !== undefined ? `0x${info.usbProductId.toString(16)}` : 'unknown';
       setDeviceStatus(`Unknown serial device (VID ${vid}, PID ${pid})`);
-      log('Identity check did not verify FCCS bootloader yet (this can happen if app is running).');
+      log('Identity check could not verify FCCS bootloader yet, please reboot the device and try again.');
     }
 
     document.getElementById('sendMagic').disabled = false;
