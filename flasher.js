@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-2';
+const FLASHER_VERSION = '2026-02-28-3';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -78,8 +78,10 @@ const waitForUpdateResult = async (timeoutMs = 20000) => {
       }
 
       if (result.done) {
+        if (text.includes('RESULT:OK')) return { status: 'success', text };
+        if (text.includes('RESULT:FAIL')) return { status: 'failure', text };
         if (text.includes('update successful')) return { status: 'success', text };
-        if (text.includes('update failed') || text.includes('Update.end failed') || text.includes('Write failed')) {
+        if (text.includes('update failed') || text.includes('Update.end failed') || text.includes('Write failed') || text.includes('timeout waiting for data') || text.includes('invalid firmware size') || text.includes('missing firmware size header')) {
           return { status: 'failure', text };
         }
         return { status: 'disconnected', text };
@@ -92,8 +94,8 @@ const waitForUpdateResult = async (timeoutMs = 20000) => {
           log('Device: ' + chunk.trim());
         }
 
-        if (text.includes('update successful')) return { status: 'success', text };
-        if (text.includes('update failed') || text.includes('Update.end failed') || text.includes('Write failed')) {
+        if (text.includes('RESULT:OK') || text.includes('update successful')) return { status: 'success', text };
+        if (text.includes('RESULT:FAIL') || text.includes('update failed') || text.includes('Update.end failed') || text.includes('Write failed') || text.includes('timeout waiting for data') || text.includes('invalid firmware size') || text.includes('missing firmware size header')) {
           return { status: 'failure', text };
         }
       }
@@ -193,7 +195,7 @@ document.getElementById('flash').onclick = async () => {
     }
 
     log('Upload complete, waiting for bootloader result…');
-    const result = await waitForUpdateResult(20000);
+    const result = await waitForUpdateResult(120000);
     if (result.status === 'success') {
       log('Flash result: success');
     } else if (result.status === 'failure') {
