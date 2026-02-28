@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-10';
+const FLASHER_VERSION = '2026-02-28-11';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -67,6 +67,59 @@ const xorChecksum = (bytes) => {
     value ^= bytes[i];
   }
   return value & 0xff;
+};
+
+const hexToBytes = (hex) => {
+  if (typeof hex !== 'string') throw new Error('Invalid sha256 field in manifest');
+  const normalized = hex.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error('Manifest sha256 must be 64 hex characters');
+  }
+
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    bytes[i] = parseInt(normalized.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+};
+
+const base64ToBytes = (base64) => {
+  if (typeof base64 !== 'string' || base64.trim().length === 0) {
+    throw new Error('Invalid signature field in manifest');
+  }
+  const binary = atob(base64.trim());
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+};
+
+const buildSignedManifestPacket = (manifest, actualFileSize) => {
+  if (!Number.isInteger(manifest.version) || manifest.version < 0) {
+    throw new Error('Manifest version must be a non-negative integer');
+  }
+  if (!Number.isInteger(manifest.size) || manifest.size <= 0) {
+    throw new Error('Manifest size must be a positive integer');
+  }
+  if (manifest.size !== actualFileSize) {
+    throw new Error(`Manifest size (${manifest.size}) does not match firmware size (${actualFileSize})`);
+  }
+
+  const hashBytes = hexToBytes(manifest.sha256);
+  const signatureBytes = base64ToBytes(manifest.signature);
+  if (signatureBytes.length === 0 || signatureBytes.length > 512) {
+    throw new Error('Manifest signature length is invalid');
+  }
+
+  const header = new Uint8Array(4 + 4 + 32 + 2);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, manifest.size, true);
+  view.setUint32(4, manifest.version, true);
+  header.set(hashBytes, 8);
+  view.setUint16(40, signatureBytes.length, true);
+
+  return { header, signatureBytes, hashBytes };
 };
 
 const waitForAck = async (reader, timeoutMs = 5000) => {
@@ -348,10 +401,16 @@ document.getElementById('sendMagic').onclick = async () => {
 
 document.getElementById('flash').onclick = async () => {
   const file = document.getElementById('firmware').files[0];
+  const manifestFile = document.getElementById('manifest').files[0];
   if (!file) { log('Select a file first'); return; }
+  if (!manifestFile) { log('Select a signed manifest (.json) first'); return; }
 
   try {
     await ensureConnected();
+
+    const manifestText = await manifestFile.text();
+    const manifest = JSON.parse(manifestText);
+    const signedPacket = buildSignedManifestPacket(manifest, file.size);
 
     try {
       await autoResetEsp();
@@ -372,10 +431,9 @@ document.getElementById('flash').onclick = async () => {
     }
     log('Bootloader ready, starting upload');
 
-    const sizeHeader = new Uint8Array(4);
-    new DataView(sizeHeader.buffer).setUint32(0, file.size, true);
-    await writer.write(sizeHeader);
-    log(`Sent size header: ${file.size} bytes`);
+    await writer.write(signedPacket.header);
+    await writer.write(signedPacket.signatureBytes);
+    log(`Sent signed manifest: v${manifest.version}, ${file.size} bytes, sig ${signedPacket.signatureBytes.length} bytes`);
 
     log(`Flashing ${file.name} (${file.size} bytes)`);
     const reader = file.stream().getReader();
