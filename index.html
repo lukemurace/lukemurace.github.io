@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>USB Serial Flasher</title>
+  <style>
+    body{font-family:sans-serif;max-width:600px;margin:2rem auto}
+    #log{white-space:pre-wrap;background:#f0f0f0;padding:.5rem}
+  </style>
+</head>
+<body>
+  <h1>USB Serial Flasher</h1>
+
+  <p>
+    <button id="connect">Connect to device</button>
+    <button id="flash" disabled>Flash firmware</button>
+    <input type="file" id="firmware" accept=".bin">
+  </p>
+
+  <pre id="log"></pre>
+
+  <script src="flasher.js"></script>
+</body>
+</html>
