@@ -1,0 +1,9 @@
+[
+  {
+    "device_id": "0000146DE216A398",
+    "label": "Primary FCCS dev unit",
+    "enabled": true,
+    "revoked": false,
+    "notes": "Initial enrolled device"
+  }
+]

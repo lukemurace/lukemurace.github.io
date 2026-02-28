@@ -2,7 +2,7 @@ const log = msg => {
   document.getElementById('log').textContent += msg + '\n';
 };
 
-const FLASHER_VERSION = '2026-02-28-14';
+const FLASHER_VERSION = '2026-02-28-15';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
 let port, writer;
@@ -11,11 +11,14 @@ const encoder = new TextEncoder();
 const EXPECTED_DEVICE_ID = 'GENUINE_FCCS';
 const ACK = 0x06;
 const NACK = 0x15;
+const DEVICE_REGISTRY_URL = './device-registry.json';
+const ENFORCE_REGISTRY_VERIFICATION = true;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const textDecoder = new TextDecoder();
 let deviceLineBuffer = '';
 let friendlyDeviceName = 'Not connected';
 let connectedDeviceUid = null;
+let registryCache = null;
 
 const setDeviceStatus = (text) => {
   friendlyDeviceName = text;
@@ -120,6 +123,53 @@ const extractDeviceUidFromText = (text) => {
   const match = text.match(/UID:([0-9A-Fa-f]{16})|DEVICE_UID:([0-9A-Fa-f]{16})/);
   if (!match) return null;
   return (match[1] || match[2]).toUpperCase();
+};
+
+const loadDeviceRegistry = async () => {
+  if (registryCache) return registryCache;
+
+  const response = await fetch(`${DEVICE_REGISTRY_URL}?t=${Date.now()}`, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Registry fetch failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error('Registry JSON must be an array');
+  }
+
+  const allowed = new Map();
+  for (const item of data) {
+    if (typeof item === 'string') {
+      const uid = normalizeDeviceIdHex(item);
+      allowed.set(uid, { device_id: uid, revoked: false });
+      continue;
+    }
+    if (item && typeof item === 'object' && typeof item.device_id === 'string') {
+      const uid = normalizeDeviceIdHex(item.device_id);
+      const revoked = item.revoked === true;
+      const enabled = item.enabled !== false;
+      if (enabled) {
+        allowed.set(uid, { ...item, device_id: uid, revoked });
+      }
+    }
+  }
+
+  registryCache = allowed;
+  return allowed;
+};
+
+const verifyDeviceUidInRegistry = async (uid) => {
+  const normalized = normalizeDeviceIdHex(uid);
+  const registry = await loadDeviceRegistry();
+  const entry = registry.get(normalized);
+  if (!entry) {
+    throw new Error(`Device UID ${normalized} is not in device-registry.json`);
+  }
+  if (entry.revoked) {
+    throw new Error(`Device UID ${normalized} is revoked in device-registry.json`);
+  }
+  return entry;
 };
 
 const buildSignedManifestPacket = (manifest, actualFileSize) => {
@@ -440,6 +490,18 @@ document.getElementById('connect').onclick = async () => {
     const verified = await verifyIdentity(1800);
     if (verified) {
       log('Identity check passed: Genuine FCCS bootloader');
+      if (connectedDeviceUid) {
+        try {
+          const entry = await verifyDeviceUidInRegistry(connectedDeviceUid);
+          const label = typeof entry.label === 'string' && entry.label.length > 0 ? ` (${entry.label})` : '';
+          log(`Registry check passed for UID ${connectedDeviceUid}${label}`);
+        } catch (registryErr) {
+          if (ENFORCE_REGISTRY_VERIFICATION) {
+            throw new Error(`Registry verification failed: ${registryErr.message}`);
+          }
+          log(`Warning: registry verification skipped: ${registryErr.message}`);
+        }
+      }
     } else {
       const info = port.getInfo ? port.getInfo() : {};
       const vid = info.usbVendorId !== undefined ? `0x${info.usbVendorId.toString(16)}` : 'unknown';
@@ -510,6 +572,16 @@ document.getElementById('flash').onclick = async () => {
     }
     if (!connectedDeviceUid) {
       throw new Error('Could not read target device UID from bootloader.');
+    }
+    try {
+      const entry = await verifyDeviceUidInRegistry(connectedDeviceUid);
+      const label = typeof entry.label === 'string' && entry.label.length > 0 ? ` (${entry.label})` : '';
+      log(`Registry check passed for UID ${connectedDeviceUid}${label}`);
+    } catch (registryErr) {
+      if (ENFORCE_REGISTRY_VERIFICATION) {
+        throw new Error(`Registry verification failed: ${registryErr.message}`);
+      }
+      log(`Warning: registry verification skipped: ${registryErr.message}`);
     }
     if (signedPacket.manifestDeviceId !== connectedDeviceUid) {
       throw new Error(`Manifest targets ${signedPacket.manifestDeviceId}, but connected device is ${connectedDeviceUid}.`);
