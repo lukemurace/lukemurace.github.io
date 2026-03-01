@@ -743,7 +743,7 @@ document.getElementById('flash').onclick = async () => {
 
     await writer.write(signedPacket.header);
     await writer.write(signedPacket.signatureBytes);
-    log(`Sent signed manifest: v${manifest.version}, ${file.size} bytes, sig ${signedPacket.signatureBytes.length} bytes`);
+    log(`Sent signed manifest: v${manifest.version}, ${firmwareBytes.length} bytes, sig ${signedPacket.signatureBytes.length} bytes`);
 
     const manifestReady = await waitForManifestReady(22000);
     if (manifestReady.status === 'error') {
