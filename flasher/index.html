@@ -531,7 +531,7 @@
 
     <!-- Step 2: BLDR -->
     <div class="step disabled step-2" id="step2">
-      <div class="step-num">02</div>
+      <div class="step-num">01a</div>
       <div class="step-body">
         <div class="step-title">Send magic wake packet</div>
         <div class="step-desc">Checks your FCCS connection to your PC, ensuring it is ready for flashing.</div>
@@ -541,7 +541,7 @@
 
     <!-- Step 3: Flash -->
     <div class="step disabled step-3" id="step3">
-      <div class="step-num">03</div>
+      <div class="step-num">02</div>
       <div class="step-body">
         <div class="step-title">Flash Firmware</div>
         <div class="step-desc">Upload a .bin file to flash to the device</div>
@@ -737,15 +737,15 @@
 
     if (!state.developerUnlocked) {
       setStepClass(step2, 'disabled');
-      markStepNum(step2, '02');
+      markStepNum(step2, '01a');
     } else if (state.sentMagic) {
       markStepDone(step2);
     } else if (sendMagicBtn.disabled) {
       setStepClass(step2, 'disabled');
-      markStepNum(step2, '02');
+      markStepNum(step2, '01a');
     } else {
       setStepClass(step2, 'active');
-      markStepNum(step2, '02');
+      markStepNum(step2, '01a');
     }
 
     if (state.flashSuccess) {
