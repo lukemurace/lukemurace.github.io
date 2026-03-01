@@ -336,6 +336,35 @@
     pointer-events: none;
   }
 
+  .release-zone {
+    grid-column: 1 / -1;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem;
+    background: rgba(59,130,246,0.03);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.6rem;
+    align-items: center;
+  }
+
+  .release-select {
+    width: 100%;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-glow);
+    border-radius: 6px;
+    padding: 0.55rem 0.65rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+  }
+
+  .release-status {
+    grid-column: 1 / -1;
+    font-size: 0.66rem;
+    color: var(--muted);
+  }
+
   /* File upload area */
   .file-zone {
     grid-column: 1 / -1;
@@ -544,19 +573,27 @@
       <div class="step-num">02</div>
       <div class="step-body">
         <div class="step-title">Flash Firmware</div>
-        <div class="step-desc">Upload a .bin file to flash to the device</div>
+        <div class="step-desc">Choose a firmware version and flash. Binary + manifest are fetched automatically.</div>
       </div>
       <button class="btn btn-primary" id="flash" disabled>Flash</button>
 
+      <div class="release-zone" id="releaseZone">
+        <select id="releaseSelect" class="release-select" disabled>
+          <option value="">Loading releases...</option>
+        </select>
+        <button class="btn btn-ghost" id="refreshReleases" type="button">Refresh</button>
+        <div class="release-status" id="releaseStatus">Waiting for release catalog...</div>
+      </div>
+
       <!-- File drop zone (shown in step 3) -->
-      <div class="file-zone" id="fileZone">
+      <div class="file-zone" id="fileZone" style="display:none;">
         <input type="file" id="firmware" accept=".bin" />
         <span class="file-icon">📦</span>
         <span id="fileZoneText">Drop <strong>.bin</strong> here or click to browse</span>
         <span class="file-name" id="fileName"></span>
       </div>
 
-      <div class="file-zone" id="manifestZone" style="display:block; margin-top:0.75rem;">
+      <div class="file-zone" id="manifestZone" style="display:none; margin-top:0.75rem;">
         <input type="file" id="manifest" accept=".json" />
         <span class="file-icon">🧾</span>
         <span id="manifestZoneText">Drop signed manifest <strong>.json</strong> here or click to browse</span>
@@ -602,7 +639,12 @@
 
   <footer>FCCS UPDATER TOOL BY LUKE MURACE · FLASHING UNAUTHORISED HARDWARE STRICTLY PROHIBITED</footer>
 </div>
-<script src="../flasher.js?v=2026-02-28-16"></script>
+<script>
+  window.FLASHER_CONFIG = {
+    signingApiBaseUrl: 'https://YOUR-UNRAID-SIGNER-DOMAIN'
+  };
+</script>
+<script src="../flasher.js?v=2026-03-01-01"></script>
 <script>
   const logBody = document.getElementById('logBody');
   const hiddenLog = document.getElementById('log');

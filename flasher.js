@@ -5,6 +5,9 @@ const log = msg => {
 const FLASHER_VERSION = '2026-02-28-16';
 log(`Flasher version: ${FLASHER_VERSION}`);
 
+const FLASHER_CONFIG = window.FLASHER_CONFIG || {};
+const SIGNING_API_BASE_URL = (FLASHER_CONFIG.signingApiBaseUrl || '').trim().replace(/\/$/, '');
+
 let port, writer;
 const MAGIC = new Uint8Array([0x42, 0x4c, 0x44, 0x52]); // "BLDR"
 const encoder = new TextEncoder();
@@ -19,6 +22,123 @@ let deviceLineBuffer = '';
 let friendlyDeviceName = 'Not connected';
 let connectedDeviceUid = null;
 let registryCache = null;
+let releaseCatalogCache = [];
+
+const apiUrl = (path) => {
+  if (!SIGNING_API_BASE_URL) {
+    throw new Error('Signing API URL is not configured');
+  }
+  return `${SIGNING_API_BASE_URL}${path}`;
+};
+
+const parseFilenameFromContentDisposition = (value) => {
+  if (typeof value !== 'string') return null;
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match && utf8Match[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+  const simpleMatch = value.match(/filename="?([^";]+)"?/i);
+  if (simpleMatch && simpleMatch[1]) {
+    return simpleMatch[1];
+  }
+  return null;
+};
+
+const setReleaseStatus = (message) => {
+  const el = document.getElementById('releaseStatus');
+  if (el) {
+    el.textContent = message;
+  }
+};
+
+const loadReleaseCatalog = async () => {
+  const selectEl = document.getElementById('releaseSelect');
+  if (!selectEl) return;
+
+  if (!SIGNING_API_BASE_URL) {
+    selectEl.innerHTML = '<option value="">No API configured</option>';
+    selectEl.disabled = true;
+    setReleaseStatus('Set FLASHER_CONFIG.signingApiBaseUrl to enable release dropdown');
+    return;
+  }
+
+  selectEl.disabled = true;
+  setReleaseStatus('Loading releases...');
+
+  try {
+    const response = await fetch(apiUrl('/api/releases'), { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Release API error (${response.status})`);
+    }
+
+    const releases = await response.json();
+    if (!Array.isArray(releases)) {
+      throw new Error('Release API returned invalid JSON');
+    }
+
+    releaseCatalogCache = releases;
+
+    selectEl.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = releases.length > 0 ? 'Select release...' : 'No releases available';
+    selectEl.appendChild(placeholder);
+
+    for (const release of releases) {
+      const option = document.createElement('option');
+      option.value = release.id;
+      option.textContent = `${release.label || release.id} (v${release.version})`;
+      selectEl.appendChild(option);
+    }
+
+    selectEl.disabled = releases.length === 0;
+    setReleaseStatus(releases.length > 0 ? `${releases.length} release(s) available` : 'No releases available');
+  } catch (error) {
+    selectEl.innerHTML = '<option value="">Failed to load releases</option>';
+    selectEl.disabled = true;
+    setReleaseStatus(error.message);
+    log('Release catalog error: ' + error.message);
+  }
+};
+
+const fetchManagedReleasePayload = async (releaseId, deviceUid) => {
+  const firmwareResponse = await fetch(apiUrl(`/api/firmware/${encodeURIComponent(releaseId)}`));
+  if (!firmwareResponse.ok) {
+    throw new Error(`Firmware download failed (${firmwareResponse.status})`);
+  }
+
+  const firmwareBuffer = await firmwareResponse.arrayBuffer();
+  const firmwareBytes = new Uint8Array(firmwareBuffer);
+  const contentDisposition = firmwareResponse.headers.get('content-disposition');
+  const firmwareName = parseFilenameFromContentDisposition(contentDisposition) || `${releaseId}.bin`;
+
+  const manifestResponse = await fetch(apiUrl('/api/manifest'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ release_id: releaseId, device_id: deviceUid }),
+  });
+
+  if (!manifestResponse.ok) {
+    const detail = await manifestResponse.text();
+    throw new Error(`Manifest request failed (${manifestResponse.status}): ${detail}`);
+  }
+
+  const manifestPayload = await manifestResponse.json();
+  if (!manifestPayload || typeof manifestPayload !== 'object' || typeof manifestPayload.manifest !== 'object') {
+    throw new Error('Manifest API returned invalid payload');
+  }
+
+  const manifest = manifestPayload.manifest;
+  const signedPacket = buildSignedManifestPacket(manifest, firmwareBytes.length);
+
+  return {
+    firmwareName,
+    firmwareBytes,
+    manifest,
+    signedPacket,
+    release: manifestPayload.release || null,
+  };
+};
 
 const setDeviceStatus = (text) => {
   friendlyDeviceName = text;
@@ -512,6 +632,7 @@ document.getElementById('connect').onclick = async () => {
 
     document.getElementById('sendMagic').disabled = false;
     document.getElementById('flash').disabled = false;
+    await loadReleaseCatalog();
   } catch (e) {
     if (e && e.name === 'NotFoundError') {
       log('Connect cancelled (no port selected)');
@@ -549,15 +670,22 @@ document.getElementById('sendMagic').onclick = async () => {
 document.getElementById('flash').onclick = async () => {
   const file = document.getElementById('firmware').files[0];
   const manifestFile = document.getElementById('manifest').files[0];
-  if (!file) { log('Select a file first'); return; }
-  if (!manifestFile) { log('Select a signed manifest (.json) first'); return; }
+  const releaseSelect = document.getElementById('releaseSelect');
+  const selectedReleaseId = releaseSelect && releaseSelect.value ? releaseSelect.value : '';
+  const managedReleaseMode = selectedReleaseId.length > 0;
+
+  if (!managedReleaseMode) {
+    if (!file) { log('Select a firmware file first or choose a release from the dropdown'); return; }
+    if (!manifestFile) { log('Select a signed manifest (.json) first or choose a release from the dropdown'); return; }
+  }
 
   try {
     await ensureConnected();
 
-    const manifestText = await manifestFile.text();
-    const manifest = JSON.parse(manifestText);
-    const signedPacket = buildSignedManifestPacket(manifest, file.size);
+    let manifest;
+    let signedPacket;
+    let firmwareBytes;
+    let firmwareName;
 
     try {
       await autoResetEsp();
@@ -583,6 +711,25 @@ document.getElementById('flash').onclick = async () => {
       }
       log(`Warning: registry verification skipped: ${registryErr.message}`);
     }
+
+    if (managedReleaseMode) {
+      log(`Fetching release ${selectedReleaseId} from signing API...`);
+      const managedPayload = await fetchManagedReleasePayload(selectedReleaseId, connectedDeviceUid);
+      manifest = managedPayload.manifest;
+      signedPacket = managedPayload.signedPacket;
+      firmwareBytes = managedPayload.firmwareBytes;
+      firmwareName = managedPayload.firmwareName;
+
+      const label = managedPayload.release && managedPayload.release.label ? managedPayload.release.label : selectedReleaseId;
+      log(`Selected release: ${label} (v${manifest.version}, ${firmwareBytes.length} bytes)`);
+    } else {
+      const manifestText = await manifestFile.text();
+      manifest = JSON.parse(manifestText);
+      signedPacket = buildSignedManifestPacket(manifest, file.size);
+      firmwareBytes = new Uint8Array(await file.arrayBuffer());
+      firmwareName = file.name;
+    }
+
     if (signedPacket.manifestDeviceId !== connectedDeviceUid) {
       throw new Error(`Manifest targets ${signedPacket.manifestDeviceId}, but connected device is ${connectedDeviceUid}.`);
     }
@@ -612,18 +759,17 @@ document.getElementById('flash').onclick = async () => {
       throw new Error('Bootloader did not confirm manifest readiness (missing "manifest OK").');
     }
 
-    log(`Flashing ${file.name} (${file.size} bytes)`);
-    const reader = file.stream().getReader();
+    log(`Flashing ${firmwareName} (${firmwareBytes.length} bytes)`);
     const ackReader = port.readable.getReader();
     let bytesSent = 0;
 
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        await sendFramedPayload(value, ackReader, 128);
-        bytesSent += value.length;
-        log(`  ${bytesSent} / ${file.size}`);
+      const chunkSize = 2048;
+      for (let offset = 0; offset < firmwareBytes.length; offset += chunkSize) {
+        const chunk = firmwareBytes.subarray(offset, Math.min(offset + chunkSize, firmwareBytes.length));
+        await sendFramedPayload(chunk, ackReader, 128);
+        bytesSent += chunk.length;
+        log(`  ${bytesSent} / ${firmwareBytes.length}`);
       }
     } finally {
       ackReader.releaseLock();
@@ -653,3 +799,12 @@ document.getElementById('flash').onclick = async () => {
     log('Error: ' + e.message);
   }
 };
+
+const refreshReleasesBtn = document.getElementById('refreshReleases');
+if (refreshReleasesBtn) {
+  refreshReleasesBtn.onclick = async () => {
+    await loadReleaseCatalog();
+  };
+}
+
+loadReleaseCatalog();
