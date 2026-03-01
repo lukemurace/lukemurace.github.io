@@ -241,6 +241,7 @@
   .step.done { border-color: rgba(16,185,129,0.3); }
   .step.done::before { background: linear-gradient(135deg, var(--green-glow) 0%, transparent 60%); opacity: 1; }
   .step.disabled { opacity: 0.45; pointer-events: none; }
+  .step.dev-locked { display: none; }
 
   .step-num {
     width: 2rem;
@@ -498,7 +499,7 @@
   <header>
     <div class="logo-block">
       <div class="logo-eyebrow">FCCS · Web FLASH TOOL</div>
-      <div class="logo-title">lukemurace<span>.</span>FCCS<span>.</span>Flasher</div>
+      <div class="logo-title">A'PEXI<span>.</span>FCCS<span>.</span>Flasher</div>
     </div>
     <div class="status-badge" id="statusBadge">
       <div class="status-dot" id="statusDot"></div>
@@ -587,7 +588,7 @@
     <div class="log-header">
       <div class="log-header-left">
         <div class="log-dot"></div>
-        Serial Log
+        Log
       </div>
       <button class="log-clear" onclick="clearLog()">Clear</button>
     </div>
@@ -606,11 +607,17 @@
   const logBody = document.getElementById('logBody');
   const hiddenLog = document.getElementById('log');
   const hiddenStatus = document.getElementById('deviceStatus');
+  const step2 = document.getElementById('step2');
+  const sendMagicBtn = document.getElementById('sendMagic');
+
+  const DEV_PASSWORD_HASH = 'f0d509fafadf20a5c089b834267bbbed9a2cae2c36248a79c090243e4a4d6b0a';
+  const DEV_UNLOCK_STORAGE_KEY = 'fccsDevModeUnlocked';
 
   const state = {
     sentMagic: false,
     flashSuccess: false,
     parsedChars: 0,
+    developerUnlocked: sessionStorage.getItem(DEV_UNLOCK_STORAGE_KEY) === '1',
   };
 
   function now() {
@@ -622,6 +629,37 @@
     if (/success|passed|manifest ok|ready|opened|verified|authorized/i.test(line)) return 'success';
     if (/warning|unknown|manual/i.test(line)) return 'warn';
     return 'info';
+  }
+
+  async function sha256Hex(value) {
+    const data = new TextEncoder().encode(value);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    const bytes = Array.from(new Uint8Array(digest));
+    return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function applyDeveloperGate() {
+    if (state.developerUnlocked) {
+      step2.classList.remove('dev-locked');
+      return;
+    }
+    step2.classList.add('dev-locked');
+    sendMagicBtn.disabled = true;
+  }
+
+  async function requestDeveloperUnlock() {
+    const input = window.prompt('Developer password');
+    if (!input) return;
+    const hash = await sha256Hex(input);
+    if (hash === DEV_PASSWORD_HASH) {
+      state.developerUnlocked = true;
+      sessionStorage.setItem(DEV_UNLOCK_STORAGE_KEY, '1');
+      appendPrettyLog('Developer mode enabled');
+      applyDeveloperGate();
+      syncStepUi();
+      return;
+    }
+    appendPrettyLog('Developer mode unlock failed');
   }
 
   function appendPrettyLog(line) {
@@ -685,9 +723,7 @@
 
   function syncStepUi() {
     const step1 = document.getElementById('step1');
-    const step2 = document.getElementById('step2');
     const step3 = document.getElementById('step3');
-    const sendMagic = document.getElementById('sendMagic');
     const flash = document.getElementById('flash');
 
     const connected = !/Not connected|Connection failed/i.test(hiddenStatus.textContent || '');
@@ -699,9 +735,12 @@
       markStepNum(step1, '01');
     }
 
-    if (state.sentMagic) {
+    if (!state.developerUnlocked) {
+      setStepClass(step2, 'disabled');
+      markStepNum(step2, '02');
+    } else if (state.sentMagic) {
       markStepDone(step2);
-    } else if (sendMagic.disabled) {
+    } else if (sendMagicBtn.disabled) {
       setStepClass(step2, 'disabled');
       markStepNum(step2, '02');
     } else {
@@ -764,6 +803,13 @@
   wireFileZone('fileZone', 'firmware', 'fileZoneText', 'fileName');
   wireFileZone('manifestZone', 'manifest', 'manifestZoneText', 'manifestName');
 
+  document.addEventListener('keydown', (event) => {
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'd') {
+      event.preventDefault();
+      requestDeveloperUnlock();
+    }
+  });
+
   const logObserver = new MutationObserver(syncFromHiddenLog);
   logObserver.observe(hiddenLog, { childList: true, characterData: true, subtree: true });
 
@@ -774,6 +820,7 @@
   statusObserver.observe(hiddenStatus, { childList: true, characterData: true, subtree: true });
 
   setInterval(syncStepUi, 300);
+  applyDeveloperGate();
   syncStatusUi();
   syncStepUi();
 </script>
