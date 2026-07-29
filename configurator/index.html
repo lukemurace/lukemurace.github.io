@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FC COMMANDER Layout Configurator</title>
+<style>
+:root{color-scheme:light dark}
+body{font-family:system-ui,-apple-system,sans-serif;max-width:860px;margin:2rem auto;padding:0 1rem;line-height:1.5}
+h1{font-size:1.4rem;margin-bottom:.25rem}
+h2{font-size:1rem;margin:1.75rem 0 .5rem;border-bottom:1px solid #8884;padding-bottom:.25rem}
+.sub{color:#7a7a7a;margin-top:0}
+.note{background:#8881;border-left:3px solid #2d6cdf;padding:.6rem .8rem;border-radius:0 4px 4px 0;font-size:.9rem}
+.row{display:flex;align-items:center;gap:.5rem;margin:.35rem 0}
+.row label{width:4.5rem;font-size:.85rem;color:#7a7a7a}
+select{flex:1;padding:.4rem;border-radius:4px;border:1px solid #8886;background:Canvas;color:CanvasText}
+input[type=number]{width:6rem;padding:.4rem;border-radius:4px;border:1px solid #8886;background:Canvas;color:CanvasText}
+button{background:#2d6cdf;color:#fff;border:0;border-radius:4px;padding:.5rem .9rem;cursor:pointer;font-size:.9rem}
+button.ghost{background:#8883;color:CanvasText}
+.bar{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}
+textarea{width:100%;height:16rem;font-family:ui-monospace,monospace;font-size:.8rem;padding:.6rem;border-radius:4px;border:1px solid #8886;background:Canvas;color:CanvasText;box-sizing:border-box}
+ol{padding-left:1.2rem}
+</style>
+</head>
+<body>
+
+<h1>FC COMMANDER Layout Configurator</h1>
+<p class="sub">Build a <code>layout.ini</code> for your FCCS without connecting to it.</p>
+
+<div class="note">
+  This page works offline and never talks to your FCCS directly &mdash; browsers block a
+  secure page from calling the device's plain-HTTP address. Build your layout here,
+  download it, then paste it into the <b>Layout file</b> box on the device portal at
+  <code>http://192.168.4.1</code> (join the <code>FC COMMANDER_xxxxxx</code> Wi-Fi first).
+  If you are already on the device portal you can edit everything there live instead.
+</div>
+
+<div id="groups"></div>
+
+<h2>Display</h2>
+<div class="row"><label>Contrast</label><input type="number" id="contrast" min="0" max="100" value="45"></div>
+<div class="row"><label>Brightness</label><input type="number" id="brightness" min="0" max="100" value="80"></div>
+
+<h2>Function Select</h2>
+<div id="funcs"></div>
+
+<h2>layout.ini</h2>
+<div class="bar">
+  <button onclick="regenerate()">Generate</button>
+  <button class="ghost" onclick="download()">Download layout.ini</button>
+  <button class="ghost" onclick="copyIni()">Copy to clipboard</button>
+  <button class="ghost" onclick="document.getElementById('file').click()">Import a layout.ini</button>
+  <input type="file" id="file" accept=".ini,.txt" hidden>
+</div>
+<textarea id="ini" spellcheck="false"></textarea>
+
+<h2>Applying it</h2>
+<ol>
+  <li>Join the FCCS Wi-Fi (SSID <code>FC COMMANDER_xxxxxx</code>, password is the device MAC address).</li>
+  <li>Open <a href="http://192.168.4.1">http://192.168.4.1</a>.</li>
+  <li>Paste the file into <b>Layout file</b> and press <b>Apply to device</b>.</li>
+</ol>
+
+<p><a href="../">&larr; Back to the flash tool</a></p>
+
+<script>
+// Mirror of the firmware signal catalog in src/fccs_signals.cpp. Keep the keys
+// in step with that table - the firmware ignores keys it does not recognise.
+const SIGNALS=[
+ {key:"RPM",              name:"Tachometer",      unit:"RPM"},
+ {key:"MAP",              name:"Manifold Press.", unit:"kPa"},
+ {key:"TPS",              name:"Throttle Pos.",   unit:"%"},
+ {key:"COOLANT_PRES",     name:"Coolant Press.",  unit:"kPa"},
+ {key:"FUEL_PRES",        name:"Fuel Press.",     unit:"kPa"},
+ {key:"OIL_PRES",         name:"Oil Press.",      unit:"kPa"},
+ {key:"ENG_DEMAND",       name:"Engine Demand",   unit:"%"},
+ {key:"WG_PRES",          name:"Wastegate Prs.",  unit:"kPa"},
+ {key:"INJ_DUTY",         name:"Injection Duty",  unit:"%"},
+ {key:"INJ_DUTY_2",       name:"Inj. Duty Sec.",  unit:"%"},
+ {key:"IGN_ANGLE",        name:"Ignition Timing", unit:"deg"},
+ {key:"WIDEBAND_1",       name:"Wideband 1",      unit:"AFR"},
+ {key:"WIDEBAND_2",       name:"Wideband 2",      unit:"AFR"},
+ {key:"VEHICLE_SPEED",    name:"Vehicle Speed",   unit:"kph"},
+ {key:"GEAR",             name:"Gear",            unit:""},
+ {key:"BATTERY_VOLTS",    name:"Battery Volts",   unit:"V"},
+ {key:"TARGET_BOOST",     name:"Target Boost",    unit:"kPa"},
+ {key:"COOLANT_TEMP",     name:"Coolant Temp",    unit:"C"},
+ {key:"AIR_TEMP",         name:"Intake Air Temp", unit:"C"},
+ {key:"FUEL_TEMP",        name:"Fuel Temp",       unit:"C"},
+ {key:"OIL_TEMP",         name:"Oil Temp",        unit:"C"},
+ {key:"GEARBOX_OIL_TEMP", name:"Gearbox Oil Tmp", unit:"C"},
+ {key:"FUEL_LEVEL",       name:"Fuel Level",      unit:"L"}
+];
+
+const GROUPS=[
+ {id:"1ch",    title:"1 Channel",        slots:1, def:["INJ_DUTY"]},
+ {id:"2ch",    title:"2 Channel",        slots:2, def:["INJ_DUTY","IGN_ANGLE"]},
+ {id:"4ch",    title:"4 Channel",        slots:4, def:["INJ_DUTY","IGN_ANGLE","MAP","RPM"]},
+ {id:"8ch",    title:"8 Channel",        slots:8, def:["INJ_DUTY","IGN_ANGLE","MAP","RPM","COOLANT_TEMP","COOLANT_PRES","OIL_TEMP","OIL_PRES"]},
+ {id:"sensor", title:"Sensor/SW Check",  slots:8, def:["AIR_TEMP","TPS","COOLANT_TEMP","OIL_TEMP","COOLANT_PRES","OIL_PRES","WIDEBAND_1","WIDEBAND_2"]},
+ {id:"tracer", title:"Map Tracer",       slots:2, def:["RPM","MAP"]}
+];
+
+const FUNCS=["Rot. Idle","Launch CTRL","Anti-Lag","FP OVRD","STRT OVRD"];
+
+function renderGroups(){
+  const host=document.getElementById('groups');host.innerHTML='';
+  for(const g of GROUPS){
+    const h=document.createElement('h2');h.textContent=g.title;host.appendChild(h);
+    for(let i=0;i<g.slots;i++){
+      const row=document.createElement('div');row.className='row';
+      const lab=document.createElement('label');lab.textContent='Ch '+(i+1);
+      const sel=document.createElement('select');
+      sel.id=`${g.id}-${i}`;
+      for(const s of SIGNALS){
+        const o=document.createElement('option');
+        o.value=s.key;o.textContent=s.unit?`${s.name} (${s.unit})`:s.name;
+        if(s.key===g.def[i])o.selected=true;
+        sel.appendChild(o);
+      }
+      sel.onchange=regenerate;
+      row.append(lab,sel);host.appendChild(row);
+    }
+  }
+}
+
+function renderFuncs(){
+  const host=document.getElementById('funcs');host.innerHTML='';
+  FUNCS.forEach((name,i)=>{
+    const row=document.createElement('div');row.className='row';
+    const cb=document.createElement('input');
+    cb.type='checkbox';cb.id='func-'+i;cb.onchange=regenerate;
+    const lab=document.createElement('label');lab.style.width='auto';lab.textContent=name;
+    row.append(cb,lab);host.appendChild(row);
+  });
+}
+
+function regenerate(){
+  let out='# FC COMMANDER layout\n';
+  out+='# Built with the online configurator\n';
+  for(const g of GROUPS){
+    out+=`\n[${g.id}]\n`;
+    for(let i=0;i<g.slots;i++){
+      out+=`${i+1} = ${document.getElementById(`${g.id}-${i}`).value}\n`;
+    }
+  }
+  out+='\n[lcd]\n';
+  out+=`contrast = ${document.getElementById('contrast').value}\n`;
+  out+=`brightness = ${document.getElementById('brightness').value}\n`;
+  out+='\n[functions]\n';
+  FUNCS.forEach((_,i)=>{
+    out+=`${i+1} = ${document.getElementById('func-'+i).checked?'on':'off'}\n`;
+  });
+  document.getElementById('ini').value=out;
+}
+
+function parseIni(text){
+  let section='';
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line||line[0]==='#'||line[0]===';')continue;
+    if(line[0]==='['){section=line.slice(1,line.indexOf(']')).toLowerCase();continue}
+    const eq=line.indexOf('=');if(eq<0)continue;
+    const key=line.slice(0,eq).trim(),value=line.slice(eq+1).trim();
+
+    if(section==='lcd'){
+      const el=document.getElementById(key.toLowerCase()==='contrast'?'contrast':'brightness');
+      if(el&&/^\d+$/.test(value))el.value=value;
+      continue;
+    }
+    if(section==='functions'){
+      const cb=document.getElementById('func-'+(parseInt(key,10)-1));
+      if(cb)cb.checked=/^(on|true|1)$/i.test(value);
+      continue;
+    }
+    const sel=document.getElementById(`${section}-${parseInt(key,10)-1}`);
+    if(sel&&SIGNALS.some(s=>s.key===value))sel.value=value;
+  }
+  regenerate();
+}
+
+function download(){
+  const b=new Blob([document.getElementById('ini').value],{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(b);a.download='layout.ini';a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function copyIni(){
+  try{
+    await navigator.clipboard.writeText(document.getElementById('ini').value);
+    alert('layout.ini copied - paste it into the device portal.');
+  }catch{
+    document.getElementById('ini').select();
+    alert('Copy blocked by the browser; the text is selected, press Ctrl+C.');
+  }
+}
+
+document.getElementById('file').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>parseIni(String(r.result));
+  r.readAsText(f);
+};
+document.getElementById('contrast').onchange=regenerate;
+document.getElementById('brightness').onchange=regenerate;
+
+renderGroups();renderFuncs();regenerate();
+</script>
+</body>
+</html>
